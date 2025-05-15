@@ -6,7 +6,7 @@ A Streamlit web application that allows users to securely store and retrieve enc
 
 ## 🚀 Live Demo
 
-[Click here to open the app](https://streamlit-app-link)  
+[Click here to open the app](https://secure-data-encryption-bykulsoomimran.streamlit.app/)  
 
 ---
 
