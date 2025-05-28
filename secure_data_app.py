@@ -1,107 +1,152 @@
-import streamlit as st
-from cryptography.fernet import Fernet
-import hashlib
+# app.py
 
+import streamlit as st
+from encryption import generate_key, get_fernet, encrypt_text, decrypt_text
+from utils import hash_passkey
+from auth import login_user, register_user
+
+# --- Session Initialization ---
 if "fernet_key" not in st.session_state:
-    st.session_state.fernet_key = Fernet.generate_key()
+    st.session_state.fernet_key = generate_key()
 if "stored_data" not in st.session_state:
     st.session_state.stored_data = {}
 if "failed_attempts" not in st.session_state:
     st.session_state.failed_attempts = {}
-if "authorized" not in st.session_state:
-    st.session_state.authorized = True
+if "authorized_user" not in st.session_state:
+    st.session_state.authorized_user = None
 if "page" not in st.session_state:
-    st.session_state.page = "Home"
+    st.session_state.page = "Login"
 
-fernet = Fernet(st.session_state.fernet_key)
+fernet = get_fernet(st.session_state.fernet_key)
 
-def hash_passkey(passkey):
-    return hashlib.sha256(passkey.encode()).hexdigest()
 
-def insert_data(user_id, text, passkey):
-    encrypted_text = fernet.encrypt(text.encode()).decode()
-    hashed_passkey = hash_passkey(passkey)
-    st.session_state.stored_data[user_id] = {
-        "encrypted_text": encrypted_text,
-        "passkey": hashed_passkey
-    }
-    st.success(f"Data stored securely for user: {user_id}")
+# --- UI Pages ---
+def show_login():
+    st.markdown("### 🔐 Login to Secure Data System")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+        if submitted:
+            if login_user(username, password):
+                st.session_state.authorized_user = username
+                st.success("Login successful!")
+                st.session_state.page = "Home"
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
 
-def retrieve_data(user_id, passkey):
-    data_store = st.session_state.stored_data
-    attempts = st.session_state.failed_attempts
-
-    if user_id not in data_store:
-        st.error("No data found for this user.")
-        return
-
-    if attempts.get(user_id, 0) >= 3:
-        st.session_state.authorized = False
-        st.session_state.page = "Login"
-        st.warning("Too many failed attempts. Please reauthorize.")
+    st.markdown("---")
+    st.info("Don't have an account?")
+    if st.button("Create New Account"):
+        st.session_state.page = "Register"
         st.rerun()
-        return
 
-    hashed_input = hash_passkey(passkey)
-    if hashed_input == data_store[user_id]["passkey"]:
-        decrypted = fernet.decrypt(data_store[user_id]["encrypted_text"].encode()).decode()
-        st.success(f"Decrypted Data: {decrypted}")
-        attempts[user_id] = 0
-    else:
-        attempts[user_id] = attempts.get(user_id, 0) + 1
-        attempts_left = 3 - attempts[user_id]
-        st.error(f"Incorrect passkey. Attempts left: {attempts_left}")
 
-def login_page():
-    st.title("🔐 Reauthorization Required")
-    username = st.text_input("Enter Admin Username")
-    password = st.text_input("Enter Admin Password", type="password")
+def show_register():
+    st.markdown("### 📝 Create New Account")
+    with st.form("register_form"):
+        username = st.text_input("Choose a Username")
+        password = st.text_input("Choose a Password", type="password")
+        submitted = st.form_submit_button("Register")
+        if submitted:
+            success, msg = register_user(username, password)
+            if success:
+                st.success(msg)
+                st.session_state.page = "Login"
+                st.rerun()
+            else:
+                st.error(msg)
 
-    if st.button("Login"):
-        if username == "admin" and password == "admin12345":
-            st.session_state.authorized = True
-            st.session_state.failed_attempts = {}
-            st.success("Login successful!")
-            st.session_state.page = "Home"
-            st.rerun()
+    if st.button("⬅ Back to Login"):
+        st.session_state.page = "Login"
+        st.rerun()
+
+
+def insert_data_ui():
+    st.subheader("📥 Store Secure Data")
+
+    user_id = st.text_input("Enter Data Identifier")
+    data = st.text_area("Enter Data to Encrypt")
+    passkey = st.text_input("Set a Passkey", type="password")
+
+    if st.button("Encrypt & Store"):
+        if user_id and data and passkey:
+            encrypted = encrypt_text(data, fernet)
+            st.session_state.stored_data[user_id] = {
+                "encrypted_text": encrypted,
+                "passkey": hash_passkey(passkey)
+            }
+            st.success(f"Data stored successfully for: {user_id}")
         else:
-            st.error("Invalid credentials.")
+            st.warning("All fields are required.")
 
+
+def retrieve_data_ui():
+    st.subheader("🔓 Retrieve Encrypted Data")
+
+    user_id = st.text_input("Enter Your Data Identifier")
+    passkey = st.text_input("Enter Your Passkey", type="password")
+
+    if st.button("Decrypt"):
+        data_store = st.session_state.stored_data
+        attempts = st.session_state.failed_attempts
+
+        if user_id not in data_store:
+            st.error("No data found for this ID.")
+            return
+
+        if attempts.get(user_id, 0) >= 3:
+            st.warning("Too many failed attempts. Please re-login.")
+            st.session_state.page = "Login"
+            st.session_state.authorized_user = None
+            st.rerun()
+            return
+
+        if hash_passkey(passkey) == data_store[user_id]["passkey"]:
+            decrypted = decrypt_text(data_store[user_id]["encrypted_text"], fernet)
+            st.success(f"Decrypted Data: {decrypted}")
+            attempts[user_id] = 0
+        else:
+            attempts[user_id] = attempts.get(user_id, 0) + 1
+            st.error(f"Incorrect passkey. Attempts left: {3 - attempts[user_id]}")
+
+
+def home():
+    st.title("🔒 Welcome to Secure Data Encryption")
+    st.write(f"👋 Logged in as: `{st.session_state.authorized_user}`")
+    st.success("Use the sidebar to navigate.")
+
+
+# --- Main Function ---
 def main():
-    if not st.session_state.authorized:
-        login_page()
+    if not st.session_state.authorized_user and st.session_state.page != "Register":
+        show_login()
+        return
+    elif st.session_state.page == "Register":
+        show_register()
         return
 
-    st.sidebar.title("🔐 Secure Data Storage")
-    st.session_state.page = st.sidebar.radio("Navigate", ["Home", "Insert Data", "Retrieve Data", "Login"], index=["Home", "Insert Data", "Retrieve Data", "Login"].index(st.session_state.page))
+    st.sidebar.title("📂 Menu")
+    st.session_state.page = st.sidebar.radio(
+        "Navigation",
+        ["Home", "Insert Data", "Retrieve Data", "Logout"],
+        index=["Home", "Insert Data", "Retrieve Data", "Logout"].index(st.session_state.page)
+    )
 
     if st.session_state.page == "Home":
-        st.title("Welcome to Secure Data Encryption System")
-        st.write("Use the sidebar to insert or retrieve encrypted data.")
-
+        home()
     elif st.session_state.page == "Insert Data":
-        st.title("📥 Store Your Secure Data")
-        user_id = st.text_input("Enter User ID")
-        data = st.text_area("Enter Data to Encrypt")
-        passkey = st.text_input("Set a Passkey", type="password")
-        if st.button("Store Data"):
-            if user_id and data and passkey:
-                insert_data(user_id, data, passkey)
-            else:
-                st.warning("All fields are required.")
-
+        insert_data_ui()
     elif st.session_state.page == "Retrieve Data":
-        st.title("🔓 Retrieve Your Encrypted Data")
-        user_id = st.text_input("Enter Your User ID")
-        passkey = st.text_input("Enter Your Passkey", type="password")
-        if st.button("Decrypt Data"):
-            if user_id and passkey:
-                retrieve_data(user_id, passkey)
-            else:
-                st.warning("Both User ID and Passkey are required.")
+        retrieve_data_ui()
+    elif st.session_state.page == "Logout":
+        st.session_state.authorized_user = None
+        st.session_state.page = "Login"
+        st.success("Logged out successfully!")
+        st.rerun()
 
-    elif st.session_state.page == "Login":
-        login_page()
 
 if __name__ == "__main__":
     main()
+
